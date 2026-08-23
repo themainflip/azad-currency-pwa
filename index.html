@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#f5f5f7">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="مبدل ارز">
+  <meta name="description" content="مبدل افغانی، دلار و تومان با نرخ آزاد">
+  <title>مبدل ارز | افغانی، دلار، تومان</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Tahoma,sans-serif;background:#f5f5f7;color:#111;min-height:100svh}
+    input,select,button{font:inherit}
+    .glass{background:rgba(255,255,255,.78);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);border:1px solid rgba(255,255,255,.7)}
+    .ios-shadow{box-shadow:0 18px 50px rgba(0,0,0,.08)}
+    .press:active{transform:scale(.97)}
+    select{appearance:none;-webkit-appearance:none}
+    .safe{padding-bottom:max(24px,env(safe-area-inset-bottom))}
+  </style>
+</head>
+<body>
+<main class="min-h-[100svh] flex items-center justify-center px-4 py-8 safe">
+  <section class="w-full max-w-md">
+    <div class="text-center mb-6">
+      <div class="mx-auto mb-3 w-14 h-14 rounded-[18px] bg-black text-white flex items-center justify-center text-2xl shadow-lg">⇄</div>
+      <h1 class="text-2xl font-bold tracking-tight">مبدل ارز</h1>
+      <p class="text-sm text-gray-500 mt-1">نرخ آزاد بازار • افغانی، دلار و تومان</p>
+    </div>
+
+    <div class="glass ios-shadow rounded-[30px] p-5">
+      <label class="block text-xs font-semibold text-gray-500 mb-2">مبلغ</label>
+      <input id="amount" inputmode="decimal" type="number" min="0" step="any" value="1"
+        class="w-full bg-white/80 rounded-2xl px-4 py-4 text-2xl font-semibold outline-none focus:ring-2 focus:ring-black/10 mb-4"
+        placeholder="مبلغ را وارد کنید">
+
+      <div class="grid grid-cols-[1fr_auto_1fr] gap-2 items-center">
+        <div class="relative">
+          <select id="from" class="w-full bg-white/80 rounded-2xl px-4 py-4 font-semibold outline-none">
+            <option value="AFN">افغانی (AFN)</option>
+            <option value="USD">دلار (USD)</option>
+            <option value="IRT">تومان (IRT)</option>
+          </select>
+        </div>
+        <button id="swap" class="press w-11 h-11 rounded-full bg-black text-white flex items-center justify-center text-xl transition-transform" aria-label="جابه‌جایی ارزها">⇄</button>
+        <div class="relative">
+          <select id="to" class="w-full bg-white/80 rounded-2xl px-4 py-4 font-semibold outline-none">
+            <option value="IRT">تومان (IRT)</option>
+            <option value="AFN">افغانی (AFN)</option>
+            <option value="USD">دلار (USD)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="mt-5 rounded-[24px] bg-black text-white p-5">
+        <div class="text-xs text-white/60 mb-2">نتیجه تبدیل</div>
+        <div id="result" class="text-3xl font-bold break-all">—</div>
+        <div id="resultUnit" class="text-sm text-white/60 mt-1">—</div>
+      </div>
+
+      <div id="status" class="mt-4 text-center text-xs text-gray-500">در حال دریافت نرخ بازار آزاد…</div>
+      <button id="refresh" class="press mt-3 w-full rounded-2xl bg-white py-3 text-sm font-semibold shadow-sm transition-transform">
+        بروزرسانی نرخ
+      </button>
+    </div>
+
+    <div class="mt-4 glass rounded-2xl px-4 py-3 text-xs text-gray-500 leading-6">
+      <b class="text-gray-700">منبع نرخ:</b> نرخ دلار و افغانی از داده‌های بازار آزاد TGJU.
+      برای تومان، ریال TGJU به تومان تبدیل می‌شود (تقسیم بر ۱۰).
+      <span id="updated"></span>
+    </div>
+  </section>
+</main>
+
+<script>
+/*
+  نرخ پایه بازار آزاد:
+  TGJU قیمت‌ها را به ریال منتشر می‌کند؛ تومان = ریال / 10.
+  برای جلوگیری از اتکا به نرخ رسمی، دلار و افغانی از بازار آزاد TGJU گرفته می‌شوند.
+  در صورت در دسترس نبودن TGJU، آخرین نرخ ذخیره‌شده یا fallback استفاده می‌شود.
+*/
+const FALLBACK = {
+  usdIRT: 199900, // تومان برای 1 USD؛ آخرین نرخ مشاهده‌شده بازار آزاد TGJU
+  afnIRT: 2851,   // تومان برای 1 AFN؛ بر اساس 28,510 ریال در TGJU
+  usdAFN: 67.60
+};
+
+const $ = id => document.getElementById(id);
+const nf = new Intl.NumberFormat('fa-IR', {maximumFractionDigits: 4});
+
+let rates = {...FALLBACK};
+let source = 'fallback';
+
+function toIRT(currency, amount) {
+  if (currency === 'IRT') return amount;
+  if (currency === 'USD') return amount * rates.usdIRT;
+  if (currency === 'AFN') return amount * rates.afnIRT;
+}
+function fromIRT(currency, toman) {
+  if (currency === 'IRT') return toman;
+  if (currency === 'USD') return toman / rates.usdIRT;
+  if (currency === 'AFN') return toman / rates.afnIRT;
+}
+function convert() {
+  const amount = Number($('amount').value || 0);
+  const from = $('from').value, to = $('to').value;
+  if (!Number.isFinite(amount)) return;
+  const toman = toIRT(from, amount);
+  const out = fromIRT(to, toman);
+  $('result').textContent = nf.format(out);
+  $('resultUnit').textContent = ({USD:'دلار آمریکا',AFN:'افغانی افغانستان',IRT:'تومان ایران'})[to];
+}
+function setStatus(text, offline=false) {
+  $('status').textContent = text;
+  $('status').className = 'mt-4 text-center text-xs ' + (offline ? 'text-orange-600' : 'text-gray-500');
+}
+
+/* تلاش برای دریافت نرخ زنده از TGJU از طریق endpoint عمومی JSON.
+   اگر CORS یا محدودیت سرویس مانع شود، fallback ذخیره‌شده استفاده می‌شود. */
+async function fetchTGJU() {
+  const endpoints = [
+    'https://api.tgju.org/v1/market/overview',
+    'https://api.tgju.org/v1/widget/v2'
+  ];
+
+  // این مسیرها را عمداً به‌عنوان تلاش اختیاری نگه می‌داریم؛
+  // ساختار API عمومی TGJU ممکن است بدون اطلاع قبلی تغییر کند.
+  for (const url of endpoints) {
+    try {
+      const r = await fetch(url, {cache:'no-store'});
+      if (!r.ok) continue;
+      const text = await r.text();
+      const usd = text.match(/(?:price_dollar_rl|دلار)[^0-9]{0,120}([0-9]{6,8})/i);
+      const afn = text.match(/(?:price_afn|افغانی)[^0-9]{0,120}([0-9]{4,7})/i);
+      if (usd) rates.usdIRT = Number(usd[1]) / 10;
+      if (afn) rates.afnIRT = Number(afn[1]) / 10;
+      if (usd || afn) {
+        rates.usdAFN = rates.usdIRT / rates.afnIRT;
+        source = 'TGJU';
+        localStorage.setItem('currencyRates', JSON.stringify({rates, savedAt:Date.now()}));
+        return true;
+      }
+    } catch (_) {}
+  }
+  return false;
+}
+
+async function loadRates() {
+  const cached = localStorage.getItem('currencyRates');
+  if (cached) {
+    try {
+      const x = JSON.parse(cached);
+      if (x.rates) rates = {...FALLBACK, ...x.rates};
+    } catch (_) {}
+  }
+
+  const ok = await fetchTGJU();
+  if (ok) {
+    setStatus('نرخ بازار آزاد TGJU دریافت شد.');
+    $('updated').textContent = ' آخرین بروزرسانی: همین حالا';
+  } else if (navigator.onLine) {
+    setStatus('اتصال زنده به TGJU در این مرورگر ممکن نشد؛ نرخ ذخیره‌شده بازار آزاد استفاده شد.', true);
+    $('updated').textContent = ' نرخ ذخیره‌شده/پشتیبان فعال است.';
+  } else {
+    setStatus('آفلاین هستید؛ رابط برنامه و آخرین نرخ ذخیره‌شده فعال است.', true);
+    $('updated').textContent = ' حالت آفلاین';
+  }
+  convert();
+}
+
+$('amount').addEventListener('input', convert);
+$('from').addEventListener('change', convert);
+$('to').addEventListener('change', convert);
+$('swap').addEventListener('click', () => {
+  const a = $('from').value;
+  $('from').value = $('to').value;
+  $('to').value = a;
+  convert();
+});
+$('refresh').addEventListener('click', loadRates);
+window.addEventListener('online', loadRates);
+window.addEventListener('offline', () => setStatus('اینترنت قطع شد؛ برنامه در حالت آفلاین ادامه می‌دهد.', true));
+
+/* Manifest به‌صورت Data URI */
+const manifest = {
+  name:"مبدل ارز",
+  short_name:"مبدل ارز",
+  start_url:".",
+  display:"standalone",
+  background_color:"#f5f5f7",
+  theme_color:"#f5f5f7",
+  lang:"fa",
+  dir:"rtl",
+  icons:[]
+};
+const manifestLink = document.createElement('link');
+manifestLink.rel = 'manifest';
+manifestLink.href = 'data:application/manifest+json;charset=utf-8,' +
+  encodeURIComponent(JSON.stringify(manifest));
+document.head.appendChild(manifestLink);
+
+/*
+  Service Worker:
+  مرورگرها معمولاً اجازه register کردن Service Worker با Blob/Data URI را نمی‌دهند.
+  بنابراین برای تک‌فایلی بودن، ابتدا Blob امتحان می‌شود و اگر مرورگر رد کرد،
+  خود اپ بدون Service Worker همچنان کاملاً کار می‌کند.
+*/
+if ('serviceWorker' in navigator) {
+  const sw = `
+    const CACHE='currency-pwa-v1';
+    self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['./']))));
+    self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
+    self.addEventListener('fetch',e=>{
+      if(e.request.method!=='GET')return;
+      e.respondWith(caches.match(e.request).then(cached=>cached||fetch(e.request).then(r=>{
+        const copy=r.clone(); caches.open(CACHE).then(c=>c.put(e.request,copy)); return r;
+      }).catch(()=>cached)));
+    });
+  `;
+  try {
+    const blob = new Blob([sw], {type:'application/javascript'});
+    const swUrl = URL.createObjectURL(blob);
+    navigator.serviceWorker.register(swUrl).catch(()=>{});
+  } catch (_) {}
+}
+
+loadRates();
+</script>
+</body>
+</html>
